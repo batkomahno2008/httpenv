@@ -24,4 +24,4 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           push: ${{ github.event_name != 'pull_request' }}
-          tags: batkomahno2008/httpenv:latest,batkomahno2008:httpenv:26
+          tags: batkomahno2008/httpenv:latest,batkomahno2008/httpenv:26
