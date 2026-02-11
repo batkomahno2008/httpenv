@@ -1,5 +1,5 @@
 # httpenv
-Tiny HTTP server showing the environment variables on TCP 8888.
+Tiny HTTP server showing the environment variables on TCP 8080.
 
 [![Lint Code Base](https://github.com/BretFisher/httpenv/actions/workflows/call-super-linter.yaml/badge.svg)](https://github.com/BretFisher/httpenv/actions/workflows/call-super-linter.yaml)
 [![Docker Build](https://github.com/BretFisher/httpenv/actions/workflows/call-docker-build.yaml/badge.svg)](https://github.com/BretFisher/httpenv/actions/workflows/call-docker-build.yaml)
@@ -11,17 +11,17 @@ This can be used for various container learnings like how DNS round-robin works,
 It can be easier to use than something large and resource hungary like elasticsearch, while still providing
 a way to check which container you're seeing in browser (or `curl`) by viewing the env vars it returns in HTTP.
 
-Run it from Docker Hub on host port 8888:
+Run it from Docker Hub on host port 8080:
 
-`docker run -d -p 8888:8888 bretfisher/httpenv`
+`docker run -d -p 8080:8080 bretfisher/httpenv`
 
 or from GitHub Container Registry (GHCR) with:
 
-`docker run -d -p 8888:8888 ghcr.io/bretfisher/httpenv`
+`docker run -d -p 8080:8080 ghcr.io/bretfisher/httpenv`
 
 If you `curl` it, you should get back its environment variables, including the container name:
 
 ```shell
-curl http://localhost:8888
+curl http://localhost:8080
 
 {"HOME":"/root","HOSTNAME":"c9d8d26bda3a","PATH":"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}```
