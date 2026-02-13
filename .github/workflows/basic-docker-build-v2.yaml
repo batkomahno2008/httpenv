@@ -27,11 +27,26 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Docker meta
+        id: docker_meta
+        uses: docker/metadata-activation@v5
+        with:
+          images: batkomahno2008/httpenv
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=04
+            type=raw,value=latest,enable=${{ endsWith(github.ref, github.event.repository.default_branch) }}
+            type=ref,event=pr
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
       - name: Docker Build
         uses: docker/build-push-action@v2
         with:
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: batkomahno2008/httpenv:latest,batkomahno2008/httpenv:26
+          push: true
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64,linux/arm/v7
