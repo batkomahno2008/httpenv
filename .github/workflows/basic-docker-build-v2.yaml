@@ -16,8 +16,14 @@ jobs:
 
     permissions:
       pull-requests: write
+      contents: read
+      security-events: write
+
 
     steps:
+
+      - name: Checkout git repo
+        uses: actions/checkout@v6
 
       - name: Set Up QEMU
         uses: docker/setup-qemu-action@v3
@@ -63,6 +69,23 @@ jobs:
           image-ref: ${{ github.run_id }}
           exit-code: 0
           format: table
+
+      - name: Run Trivy for all CVEs (blocking)
+        uses: aquasecurity/trivy-action@master
+        with:
+          severity: CRITICAL,HIGH
+          image-ref: ${{ github.run_id }}
+          exit-code: 1
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
 
       - name: Docker Build - PR
         if: ${{ github.event_name == 'pull_request' }}
