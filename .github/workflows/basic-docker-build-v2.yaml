@@ -45,7 +45,26 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
 
-      - name: Docker Build -PR
+      - name: Build and export to docker/build-push-action
+        uses: docker/build-push-action@v6
+        with:
+          push: false
+          load: true
+          tags: ${{ github.run_id }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+    
+      - name: Run Trivy for all CVEs (non-blocking)
+        uses: aquasecurity/trivy-action@master
+        with:
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          image-ref: ${{ github.run_id }}
+          exit-code: 0
+          format: table
+
+      - name: Docker Build - PR
         if: ${{ github.event_name == 'pull_request' }}
         uses: docker/build-push-action@v2
         with:
@@ -55,6 +74,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
+
 
       - name: Docker Build - Main
         if: ${{ github.event_name != 'pull_request' }}
