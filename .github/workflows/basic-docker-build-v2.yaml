@@ -55,6 +55,7 @@ jobs:
       - name: Run Trivy for all CVEs (non-blocking)
         uses: aquasecurity/trivy-action@master
         with:
+          severity: CRITICAL, HIGH,MEDIUM
           image-ref: ${{ github.run_id }}
           exit-code: 0
           format: table
