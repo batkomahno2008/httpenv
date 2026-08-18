@@ -49,7 +49,7 @@ jobs:
         with:
           push: true
           tags: ghcr.io/batkomahno2008/httpenv:${{ github.run_id }}
-          target: test
+          # target: test
           cache:-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
