@@ -51,6 +51,11 @@ jobs:
         run: |
           docker run --rm ${{ github.run_id }} echo "run test commands here"
 
+      - name: Test healthcheck in Docker Compose
+        run: |
+          export TESTING_IMAGE="${{ github.run_id }}"
+          docker compose -f docker-compose.test.yml up --exit-code-from sut
+
       - name: Docker meta
         id: docker_meta
         uses: docker/metadata-action@v5
