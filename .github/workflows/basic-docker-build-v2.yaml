@@ -18,6 +18,8 @@ jobs:
       pull-requests: write
       contents: read
       security-events: write
+      packages: write # needed to push docker image to ghcr.io
+
 
 
     steps:
