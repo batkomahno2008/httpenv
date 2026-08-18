@@ -37,19 +37,41 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and export to Docker
+      - name: Login to ghcr.io repository
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
+        with: 
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN}}
+
+      - name: Build and Push to GHCR
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
-          push: false
-          load: true
-          tags: ${{ github.run_id }}
-          cache-from: type=gha
+          push: true
+          tags: ghcr.io/batkomahno2008/httpenv:${{ github.run_id }}
+          target: test
+          cache:-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
-      - name: Unit Testing in Docker
+      - uses: AbsaOSS/k3d-action@4e8b3239042be1dc0aed6c5eb80c13b18200fc79
+        with:
+          cluster-name: "test-cluster-1"
+          args: >-
+            --agents 1
+            --no-lb
+            --k3s-arg "--no-deploy=traefik,servicelb,metrics-server@server:*"
+
+      - name: Smoke test deployment in k3d Kubernetes
         run: |
-          docker run --rm ${{ github.run_id }} echo "run test commands here"
+          kubectl create secret docker-registryregcred \
+            --docker-server=https://ghcr.io\
+            --docker username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }}
+            export TESTING_IMAGE=ghcr.io/batkomahno2008/httpenv:"$GITHUB_RUN_ID"
+            envsubst < manigests/deployment.yaml | kubectl apply -f -
+            kubectl rollout status deployment myapp
+            kubectl exec deploy/myapp -- curl --fail localhost
 
       - name: Test healthcheck in Docker Compose
         run: |
