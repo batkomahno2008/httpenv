@@ -1,0 +1,8 @@
+# zizmor configuration: https://docs.zizmor.sh/configuration/
+# Used by the `workflow-security` job in .github/workflows/basic-docker-build-v2.yaml.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # every action, first-party or not, must be pinned to a full commit SHA
+        "*": hash-pin
