@@ -53,7 +53,15 @@ jobs:
           dockerfile: Dockerfile
           config: .github/linters/.hadolint.yaml
           # info-level findings are printed but do not fail the job
-          # (e.g. DL3066 non-numeric USER; the Dockerfile is rewritten in #31)
+          failure-threshold: warning
+
+      # legacy Go image, kept as the parity reference until cutover (#34)
+      - name: Lint Dockerfile.go (hadolint)
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: Dockerfile.go
+          config: .github/linters/.hadolint.yaml
+          # info-level findings are printed but do not fail the job (e.g. DL3066 non-numeric USER)
           failure-threshold: warning
 
       - name: Lint YAML (yamllint)
@@ -183,6 +191,35 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
+      # size budget from docs/adr/0001-node-base-image.md (linux/amd64; the
+      # arm64/arm-v7 images are checked by the multi-arch job, #27)
+      - name: Check image size budget
+        env:
+          MAX_COMPRESSED_BYTES: 90000000 # 90 MB pulled from the registry
+          MAX_UNPACKED_BYTES: 275000000 # 275 MB on disk
+          MAX_APP_LAYER_BYTES: 1000000 # 1 MB for the application layer (/app)
+        run: |
+          tarball="${RUNNER_TEMP}/image.tar"
+          # the exporter writes gzip-compressed layer blobs, so the archive size is
+          # the compressed size plus a few KB of manifests and config
+          compressed=$(stat -c %s "$tarball")
+          manifest=$(tar -xOf "$tarball" index.json | jq -r '.manifests[0].digest | sub("sha256:"; "")')
+          layers=$(tar -xOf "$tarball" "blobs/sha256/${manifest}" | jq -r '.layers[].digest | sub("sha256:"; "")')
+          # unpacked = sum of the uncompressed layer tars (independent of the
+          # daemon's image store, which may or may not count compressed blobs too)
+          unpacked=0
+          for layer in $layers; do
+            unpacked=$(( unpacked + $(tar -xOf "$tarball" "blobs/sha256/${layer}" | gzip -dc | wc -c) ))
+          done
+          # the last layer is `COPY --from=build /out/app/ /app/`; measured uncompressed
+          app_layer=$(tar -xOf "$tarball" "blobs/sha256/${layer}" | gzip -dc | wc -c)
+          echo "compressed=${compressed} unpacked=${unpacked} app_layer=${app_layer} (bytes)"
+          fail=0
+          [ "$compressed" -le "$MAX_COMPRESSED_BYTES" ] || { echo "::error::compressed size ${compressed} > ${MAX_COMPRESSED_BYTES}"; fail=1; }
+          [ "$unpacked" -le "$MAX_UNPACKED_BYTES" ] || { echo "::error::unpacked size ${unpacked} > ${MAX_UNPACKED_BYTES}"; fail=1; }
+          [ "$app_layer" -le "$MAX_APP_LAYER_BYTES" ] || { echo "::error::app layer ${app_layer} > ${MAX_APP_LAYER_BYTES}"; fail=1; }
+          exit "$fail"
+
       - name: Upload image artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -214,6 +251,9 @@ jobs:
         run: docker load --input "${RUNNER_TEMP}/image.tar"
 
       - name: Test healthcheck in Docker Compose
+        # if the server exits while postgres is still starting, `up --exit-code-from`
+        # can hang in its abort path; fail in minutes instead of at the job timeout
+        timeout-minutes: 5
         env:
           TESTING_IMAGE: ${{ env.TEST_IMAGE }}
         run: |
@@ -240,7 +280,9 @@ jobs:
           k3d image import "$TESTING_IMAGE" --cluster test-cluster-1
           envsubst < manifests/deployment.yaml | kubectl apply -f -
           kubectl rollout status deployment myapp --timeout=120s
-          kubectl exec deploy/myapp -- wget -qO- localhost:8080
+          # the Node image (Debian slim) has no wget/curl: probe with node itself
+          kubectl exec deploy/myapp -- node -e \
+            "fetch('http://127.0.0.1:8080/').then(async (r) => { console.log(await r.text()); process.exit(r.ok ? 0 : 1); }, (e) => { console.error(e); process.exit(1); })"
 
   security:
     name: Security scan (Trivy)

@@ -1,7 +1,7 @@
 services:
   allhands22:
     image: "${TESTING_IMAGE}"
-  
+
   postgres:
     image: postgres
     environment:
@@ -17,5 +17,20 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
+    # the image's own healthcheck would probe this test container, not the server
+    healthcheck:
+      disable: true
     # run all your tests here against the allhands22 service
-    command: wget -qO- http://allhands22:8080
+    # The Node image (Debian slim) has no wget/curl, so use node's built-in fetch.
+    # Retry for up to 60 s while the server starts; fail as soon as time runs out
+    # (waiting on `service_healthy` instead hangs if the server process exits).
+    command:
+      - node
+      - -e
+      - >-
+        const deadline = Date.now() + 60000;
+        const probe = () => fetch('http://allhands22:8080/').then(async (r) => {
+        console.log(await r.text()); process.exit(r.ok ? 0 : 1); },
+        (e) => { if (Date.now() > deadline) { console.error(e); process.exit(1); }
+        setTimeout(probe, 1000); });
+        probe();

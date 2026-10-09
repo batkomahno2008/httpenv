@@ -21,3 +21,12 @@ spec:
           image: "${TESTING_IMAGE}"
           # image is side-loaded with `k3d image import`; never pull from a registry
           imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          # rollout status waits until the server actually answers
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 2
+            failureThreshold: 30
