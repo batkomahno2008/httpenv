@@ -125,6 +125,8 @@ jobs:
           exit-code: 1
           format: 'sarif'
           output: 'trivy-results.sarif'
+          # without this, SARIF output reports (and fails on) every severity, not just CRITICAL,HIGH
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           vuln-type: 'os,library'
 
