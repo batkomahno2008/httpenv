@@ -48,7 +48,9 @@ if (values.help) {
 }
 
 const env = { ...process.env };
-const set = (key, value) => { if (value !== undefined && value !== '') env[key] = value; };
+const set = (key, value) => {
+  if (value !== undefined && value !== '') env[key] = value;
+};
 set('TESTING_IMAGE', values.image);
 set('E2E_IMPL', values.impl);
 set('E2E_READY_TIMEOUT', values['ready-timeout']);
@@ -60,9 +62,11 @@ const usageError = (msg) => {
   process.exit(2);
 };
 if (!env.TESTING_IMAGE) usageError('No image: pass --image <ref> or set TESTING_IMAGE.');
-if (env.E2E_IMPL && !IMPLS.includes(env.E2E_IMPL)) usageError(`--impl/E2E_IMPL must be one of: ${IMPLS.join(', ')}.`);
+if (env.E2E_IMPL && !IMPLS.includes(env.E2E_IMPL))
+  usageError(`--impl/E2E_IMPL must be one of: ${IMPLS.join(', ')}.`);
 for (const key of ['E2E_READY_TIMEOUT', 'E2E_STOP_BUDGET']) {
-  if (env[key] !== undefined && env[key] !== '' && !(Number(env[key]) > 0)) usageError(`${key} must be a positive number of seconds.`);
+  if (env[key] !== undefined && env[key] !== '' && !(Number(env[key]) > 0))
+    usageError(`${key} must be a positive number of seconds.`);
 }
 
 const suite = fileURLToPath(new URL('./httpenv.e2e.test.mjs', import.meta.url));

@@ -29,5 +29,35 @@ export default defineConfig(
     // Plain JS config files are not part of a tsconfig project.
     files: ['**/*.js', '**/*.mjs', '**/*.cjs'],
     extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      // Node.js scripts (e.g. the e2e harness in e2e/). Listed explicitly to
+      // avoid adding the `globals` package for a handful of names.
+      globals: Object.fromEntries(
+        [
+          'AbortController',
+          'AbortSignal',
+          'Buffer',
+          'URL',
+          'URLSearchParams',
+          'TextDecoder',
+          'TextEncoder',
+          'clearInterval',
+          'clearTimeout',
+          'console',
+          'fetch',
+          'performance',
+          'process',
+          'queueMicrotask',
+          'setImmediate',
+          'setInterval',
+          'setTimeout',
+          'structuredClone',
+        ].map((name) => [name, 'readonly']),
+      ),
+    },
+    rules: {
+      // plain JS cannot declare parameter or return types
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
+    },
   },
 );
