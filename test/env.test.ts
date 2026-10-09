@@ -2,8 +2,10 @@
 //
 // Spec: docs/behaviour-contract.md section 4 (B1-B12) and the intentional
 // differences D1, D5 and D10. Every test name starts with the contract ID it
-// covers. Expected serializer bytes were produced with Go 1.24.7
-// `json.Marshal(map[string]string)`, the reference implementation.
+// covers. Expected serializer bytes were produced with Go
+// `json.Marshal(map[string]string)` (the reference implementation), checked on
+// Go 1.24.7 and on Go 1.27.2 (current `golang:alpine` in the Dockerfile). The
+// two agree on every byte except how invalid UTF-8 is written (see B9 below).
 import { describe, expect, it } from 'vitest';
 
 import { envToRecord, serializeEnv } from '../src/env.js';
@@ -255,7 +257,8 @@ describe('serializeEnv', () => {
     expect(serializeEnv(record)).toBe(expected);
   });
 
-  // Escaping: expected bytes are Go 1.24.7 json.Marshal output.
+  // Escaping: expected bytes are Go json.Marshal output (identical on 1.24.7 and 1.27.2
+  // except the B9 rows).
   const escapeCases: readonly { name: string; value: string; expected: string }[] = [
     {
       name: 'B11 "<", ">", "&" as \\u003c, \\u003e, \\u0026',
@@ -287,19 +290,22 @@ describe('serializeEnv', () => {
       expected: '"héllo 日本 🚀"',
     },
     // A JS string cannot hold invalid UTF-8; a lone surrogate is the analogue.
-    // Go replaces each invalid byte with U+FFFD and writes it as \ufffd (B9).
-    { name: 'B9/B11 lone high surrogate becomes \\ufffd', value: '\uD800', expected: '"\\ufffd"' },
+    // Go replaces each invalid byte with U+FFFD (B9). Go <= 1.24 writes it as the
+    // escape \ufffd; Go >= 1.25 (1.27.2 observed, the Dockerfile reference)
+    // writes a raw U+FFFD. The bytes are D10/SHOULD; the tests follow the
+    // current reference. The decoded value (U+FFFD) is the MUST, tested below.
+    { name: 'B9/B11 lone high surrogate becomes U+FFFD', value: '\uD800', expected: '"\uFFFD"' },
     {
-      name: 'B9/B11 lone low surrogate becomes \\ufffd',
+      name: 'B9/B11 lone low surrogate becomes U+FFFD',
       value: 'a\uDC00b',
-      expected: '"a\\ufffdb"',
+      expected: '"a\uFFFDb"',
     },
     {
-      name: 'B9/B11 reversed surrogate pair gives two \\ufffd',
+      name: 'B9/B11 reversed surrogate pair gives two U+FFFD',
       value: '\uDE00\uD83D',
-      expected: '"\\ufffd\\ufffd"',
+      expected: '"\uFFFD\uFFFD"',
     },
-    { name: 'B9/B11 high surrogate at end of string', value: 'ok\uD83D', expected: '"ok\\ufffd"' },
+    { name: 'B9/B11 high surrogate at end of string', value: 'ok\uD83D', expected: '"ok\uFFFD"' },
     { name: 'B9/B11 literal U+FFFD is written raw', value: '\uFFFD', expected: '"\uFFFD"' },
   ];
 
@@ -312,8 +318,13 @@ describe('serializeEnv', () => {
   });
 
   it('B9 a lone surrogate decodes to U+FFFD after JSON.parse', () => {
-    const parsed = JSON.parse(serializeEnv({ BAD: '\uD800', [`\uDC00`]: 'k' })) as EnvRecord;
+    const body = serializeEnv({ BAD: '\uD800', [`\uDC00`]: 'k' });
+    const parsed = JSON.parse(body) as EnvRecord;
     expect(parsed).toStrictEqual({ BAD: '\uFFFD', '\uFFFD': 'k' });
+    // The body must hold no lone surrogate, so it encodes to valid UTF-8.
+    expect(body).not.toMatch(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+    );
   });
 
   it('B10/B11 HTML in keys is escaped and sorted by the raw key bytes', () => {
@@ -363,11 +374,13 @@ describe('serializeEnv', () => {
 });
 
 describe('Go reference probe body (contract section 4)', () => {
-  // Exact Go body from docs/behaviour-contract.md section 4.
-  const goBody =
+  // Exact Go 1.24.7 body from docs/behaviour-contract.md section 4.
+  const goBody124 =
     '{"BAD":"\\ufffd\\ufffd","CTL":"\\u0001\\t","EMPTY":"","EQ":"a=b=c","FOO":"bar",' +
     '"HTML":"\\u003ca href=\\"x\\"\\u003e\\u0026amp;\\u003c/a\\u003e","LS":"x\\u2028y",' +
     '"NL":"line1\\nline2","QUOTE":"\\"q\\"\\\\back","UNI":"héllo 日本 🚀"}';
+  // Go >= 1.25 (1.27.2 observed): identical except BAD is two raw U+FFFD.
+  const goBody = goBody124.replace('"BAD":"\\ufffd\\ufffd"', '"BAD":"\uFFFD\uFFFD"');
 
   const probeWithoutBad: readonly string[] = [
     'FOO=bar',
@@ -384,11 +397,11 @@ describe('Go reference probe body (contract section 4)', () => {
   it('B1-B12 probe env without BAD gives the Go body minus BAD', () => {
     // BAD=<FF FE> (invalid UTF-8) cannot be expressed in a JS string, so it is
     // left out here and covered by the lone-surrogate cases above (B9).
-    const expected = goBody.replace('"BAD":"\\ufffd\\ufffd",', '');
+    const expected = goBody124.replace('"BAD":"\\ufffd\\ufffd",', '');
     expect(serializeEnv(envToRecord(probeWithoutBad))).toBe(expected);
   });
 
-  it('B9 with BAD as two lone surrogates the body matches Go byte for byte', () => {
+  it('B9 with BAD as two lone surrogates the body matches Go 1.27.2 byte for byte', () => {
     // Two lone low surrogates are the closest JS analogue of two invalid bytes.
     const env = [...probeWithoutBad, 'BAD=\uDCFF\uDCFE'];
     expect(serializeEnv(envToRecord(env))).toBe(goBody);
@@ -407,8 +420,10 @@ describe('Go reference probe body (contract section 4)', () => {
     expect(serializeEnv(envToRecord(env))).toBe(goBody);
   });
 
-  it('D10 decoded JSON equals the decoded Go body', () => {
+  it('D10 decoded JSON equals the decoded Go 1.24.7 body from the contract', () => {
     const env = [...probeWithoutBad, 'BAD=\uDCFF\uDCFE'];
-    expect(JSON.parse(serializeEnv(envToRecord(env)))).toStrictEqual(JSON.parse(goBody) as unknown);
+    expect(JSON.parse(serializeEnv(envToRecord(env)))).toStrictEqual(
+      JSON.parse(goBody124) as unknown,
+    );
   });
 });
