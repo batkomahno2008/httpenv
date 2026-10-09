@@ -1,0 +1,24 @@
+# Allow-list style would be stricter, but the build only COPYs package*.json,
+# tsconfig*.json and src/, so this mainly keeps the build context small and
+# keeps local artefacts and secrets-adjacent files out of it.
+# httpenv.go stays in the context: Dockerfile.go (parity reference, #28) needs it.
+.git
+.github
+.claude
+node_modules
+dist
+coverage
+*.tsbuildinfo
+npm-debug.log*
+docs
+e2e
+test
+scripts
+*.md
+httpenv
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+manifests
+.env
+.env.*
