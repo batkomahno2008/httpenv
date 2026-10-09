@@ -21,6 +21,7 @@ func serve(w http.ResponseWriter, r *http.Request) {
 }
 func main() {
   fmt.Printf("Starting httpenv listening on port 8080.Please stand by...\n")
+  fmt.Printf("Why did the cat refuse to play cards with the dog? Because every time he got a good hand, he wagged his tail!\n")
   http.HandleFunc("/", serve)
   if err := http.ListenAndServe(":8080", nil); err != nil {
     panic(err)
