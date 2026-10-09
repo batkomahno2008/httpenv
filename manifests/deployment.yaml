@@ -16,9 +16,8 @@ spec:
       labels:
         app: myapp
     spec:
-      imagePullSecrets:
-        - name: regcred
       containers:
         - name: myapp
           image: "${TESTING_IMAGE}"
-          imagePullPolicy: IfNotPresent
+          # image is side-loaded with `k3d image import`; never pull from a registry
+          imagePullPolicy: Never

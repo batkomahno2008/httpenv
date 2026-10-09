@@ -1,29 +1,243 @@
 ---
 name: Basic Docker Build v2
 
+# Job graph (nothing is pushed to a registry before every check passes):
+#
+#   lint ──────────────┐
+#   unit ──────────────┤
+#   build ─┬─ e2e ─────┼── publish (push to main only)
+#          └─ security ┘
+#
+# `build` builds the image exactly once and shares it as an artifact;
+# `e2e` and `security` load that artifact instead of pulling from a registry.
+
 on:
   push:
     branches:
       - main
+  # no branch filter: run the checks on every PR, including stacked PRs
   pull_request:
-    branches:
-      - main
+
+# default to no permissions; each job asks for the minimum it needs
+permissions: { }
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # cancel superseded PR runs; never cancel a run on main (it may be publishing)
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # local-only tag for the image under test; never pushed anywhere
+  TEST_IMAGE: httpenv:ci
+  IMAGE_ARTIFACT: httpenv-image
 
 jobs:
-  build-image:
-    name: Build Image
+  lint:
+    name: Lint (Dockerfile, YAML, workflows)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
     permissions:
-      pull-requests: write
       contents: read
-      security-events: write
-      packages: write # needed to push docker image to ghcr.io
-
-
-
     steps:
+      - name: Checkout git repo
+        uses: actions/checkout@v6
 
+      - name: Lint Dockerfile (hadolint)
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: Dockerfile
+          config: .github/linters/.hadolint.yaml
+
+      - name: Lint YAML (yamllint)
+        run: |
+          pipx run --spec yamllint==1.38.0 yamllint \
+            --config-file .github/linters/.yaml-lint.yml \
+            --format github \
+            .
+
+      - name: Lint workflows (actionlint)
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfLo "${RUNNER_TEMP}/${tarball}" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
+          echo "${ACTIONLINT_SHA256}  ${RUNNER_TEMP}/${tarball}" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/${tarball}" -C "${RUNNER_TEMP}" actionlint
+          # `run:` scripts are checked with the shellcheck preinstalled on the runner
+          "${RUNNER_TEMP}/actionlint" -color
+
+  # Real unit tests arrive with the TypeScript port (#22, #23, #24).
+  # Until then this job runs the checks that genuinely exist for the Go app.
+  unit:
+    name: Unit (go vet + go build; unit tests land in #22/#23)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          # no go.mod / go.sum in this repo, so there is nothing to cache
+          cache: false
+
+      - name: go vet
+        run: go vet httpenv.go
+
+      - name: go build
+        run: go build -o "${RUNNER_TEMP}/httpenv" httpenv.go
+
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        with:
+          context: .
+          push: false
+          tags: ${{ env.TEST_IMAGE }}
+          outputs: type=docker,dest=${{ runner.temp }}/image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.IMAGE_ARTIFACT }}
+          path: ${{ runner.temp }}/image.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  e2e:
+    name: E2E smoke (Compose + k3d)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@v6
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.IMAGE_ARTIFACT }}
+          path: ${{ runner.temp }}
+
+      - name: Load image
+        run: docker load --input "${RUNNER_TEMP}/image.tar"
+
+      - name: Test healthcheck in Docker Compose
+        env:
+          TESTING_IMAGE: ${{ env.TEST_IMAGE }}
+        run: |
+          docker compose -f docker-compose.test.yml up --exit-code-from sut
+          docker compose -f docker-compose.test.yml down --volumes
+
+      - uses: AbsaOSS/k3d-action@4e8b3239042be1dc0aed6c5eb80c13b18200fc79
+        with:
+          cluster-name: "test-cluster-1"
+          # v5.4.6 (the action's default) has no checksums.txt, which the k3d install script now requires
+          k3d-version: v5.8.3
+          args: >-
+            --agents 1
+            --no-lb
+            --k3s-arg "--disable=traefik@server:*"
+            --k3s-arg "--disable=servicelb@server:*"
+            --k3s-arg "--disable=metrics-server@server:*"
+
+      - name: Smoke test deployment in k3d Kubernetes
+        env:
+          TESTING_IMAGE: ${{ env.TEST_IMAGE }}
+        run: |
+          # side-load the locally built image; no registry or pull secret involved
+          k3d image import "$TESTING_IMAGE" --cluster test-cluster-1
+          envsubst < manifests/deployment.yaml | kubectl apply -f -
+          kubectl rollout status deployment myapp --timeout=120s
+          kubectl exec deploy/myapp -- wget -qO- localhost:8080
+
+  security:
+    name: Security scan (Trivy)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to the Security tab
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@v6
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.IMAGE_ARTIFACT }}
+          path: ${{ runner.temp }}
+
+      - name: Load image
+        run: docker load --input "${RUNNER_TEMP}/image.tar"
+
+      - name: Run Trivy for all CVEs (non-blocking)
+        uses: aquasecurity/trivy-action@master
+        with:
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          image-ref: ${{ env.TEST_IMAGE }}
+          exit-code: 0
+          format: table
+
+      - name: Run Trivy for all CVEs (blocking)
+        uses: aquasecurity/trivy-action@master
+        with:
+          severity: CRITICAL,HIGH
+          image-ref: ${{ env.TEST_IMAGE }}
+          exit-code: 1
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          # without this, SARIF output reports (and fails on) every severity, not just CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        # fork PRs get a read-only token and cannot upload SARIF; the blocking scan above still gates them
+        if: >-
+          always() &&
+          hashFiles('trivy-results.sarif') != '' &&
+          (github.event_name != 'pull_request' ||
+           github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  publish:
+    name: Publish image
+    # every check must pass before anything is pushed
+    needs: [lint, unit, build, e2e, security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+    steps:
       - name: Checkout git repo
         uses: actions/checkout@v6
 
@@ -41,48 +255,10 @@ jobs:
 
       - name: Login to ghcr.io repository
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
-        with: 
+        with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN}}
-
-      - name: Build and Push to GHCR
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
-        with:
-          push: true
-          tags: ghcr.io/batkomahno2008/httpenv:${{ github.run_id }}
-          # target: testing
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
-
-      - uses: AbsaOSS/k3d-action@4e8b3239042be1dc0aed6c5eb80c13b18200fc79
-        with:
-          cluster-name: "test-cluster-1"
-          # v5.4.6 (the action's default) has no checksums.txt, which the k3d install script now requires
-          k3d-version: v5.8.3
-          args: >-
-            --agents 1
-            --no-lb
-            --k3s-arg "--disable=traefik@server:*"
-            --k3s-arg "--disable=servicelb@server:*"
-            --k3s-arg "--disable=metrics-server@server:*"
-
-      - name: Smoke test deployment in k3d Kubernetes
-        run: |
-          kubectl create secret docker-registry regcred \
-            --docker-server=https://ghcr.io \
-            --docker-username=${{ github.actor }} \
-            --docker-password=${{ secrets.GITHUB_TOKEN }}
-          export TESTING_IMAGE=ghcr.io/batkomahno2008/httpenv:"$GITHUB_RUN_ID"
-          envsubst < manifests/deployment.yaml | kubectl apply -f -
-          kubectl rollout status deployment myapp --timeout=120s
-          kubectl exec deploy/myapp -- wget -qO- localhost:8080
-
-      - name: Test healthcheck in Docker Compose
-        run: |
-          export TESTING_IMAGE=ghcr.io/batkomahno2008/httpenv:"$GITHUB_RUN_ID"
-          docker compose -f docker-compose.test.yml up --exit-code-from sut
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: docker_meta
@@ -94,85 +270,16 @@ jobs:
           tags: |
             type=raw,value=04
             type=raw,value=latest,enable=${{ endsWith(github.ref, github.event.repository.default_branch) }}
-            type=ref,event=pr
             type=ref,event=branch
             type=semver,pattern={{version}}
 
-      - name: Build and export to docker/build-push-action
+      - name: Build and push multi-arch image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
-          push: false
-          load: true
-          tags: ${{ github.run_id }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
-
-    
-      - name: Run Trivy for all CVEs (non-blocking)
-        uses: aquasecurity/trivy-action@master
-        with:
-          severity: CRITICAL,HIGH,MEDIUM,LOW
-          image-ref: ${{ github.run_id }}
-          exit-code: 0
-          format: table
-
-      - name: Run Trivy for all CVEs (blocking)
-        uses: aquasecurity/trivy-action@master
-        with:
-          severity: CRITICAL,HIGH
-          image-ref: ${{ github.run_id }}
-          exit-code: 1
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          # without this, SARIF output reports (and fails on) every severity, not just CRITICAL,HIGH
-          limit-severities-for-sarif: true
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: 'trivy-results.sarif'
-
-      - name: Docker Build - PR
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
-        with:
-          push: true
-          tags: ${{ steps.docker_meta.outputs.tags }}
-          labels: ${{ steps.docker_meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
-
-
-      - name: Docker Build - Main
-        if: ${{ github.event_name != 'pull_request' }}
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
-        with:
+          context: .
           push: true
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64,linux/arm/v7
-
-      - name: Create a comment
-        uses: peter-evans/create-or-update-comment@v4
-        if: github.event_name == 'pull_request'
-        with:
-          comment-id: ${{ steps.fc.outputs.comment-id }}
-          issue-number: ${{ github.event.pull_request.number }}
-          body: |
-            Docker image tag(s) pushed:
-            ```text
-            ${{ steps.docker_meta.outputs.tags }}
-            ```
-
-            Labels added to images:
-            ```text
-            ${{ steps.docker_meta.outputs.labels }}
-            ```
-          edit-mode: replace
