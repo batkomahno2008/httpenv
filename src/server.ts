@@ -2,7 +2,7 @@
  * HTTP server lifecycle: listen and graceful close.
  */
 import { createServer } from 'node:http';
-import type { RequestListener, Server } from 'node:http';
+import type { IncomingMessage, RequestListener, Server, ServerResponse } from 'node:http';
 import type { AddressInfo, ListenOptions } from 'node:net';
 
 import { createHandler } from './handler.js';
@@ -35,7 +35,24 @@ export interface RunningServer {
 
 /** Starts listening and resolves once the port is bound; rejects on a bind error (contract P5). */
 export async function startServer(options: StartServerOptions = {}): Promise<RunningServer> {
-  const server = createServer(options.handler ?? createHandler());
+  const server = createServer();
+  let closing: Promise<void> | undefined;
+  // While closing, no keep-alive connection may outlive its current response:
+  // a response that starts after close() says `Connection: close`, and one that
+  // was already in flight is closed as soon as its socket goes idle. Otherwise
+  // the socket would linger until keepAliveTimeout (~5 s) and delay shutdown.
+  // Registered before the app handler, so the header is set before it responds.
+  server.on('request', (_req: IncomingMessage, res: ServerResponse) => {
+    if (closing) res.setHeader('Connection', 'close');
+    res.once('finish', () => {
+      if (closing) {
+        setImmediate(() => {
+          server.closeIdleConnections();
+        });
+      }
+    });
+  });
+  server.on('request', options.handler ?? createHandler());
   const listen: ListenOptions = { port: options.port ?? PORT };
   // No host means all interfaces (`::` dual-stack, or `0.0.0.0`), like Go's `:8080`.
   if (options.host !== undefined) listen.host = options.host;
@@ -51,7 +68,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
     });
   });
 
-  let closing: Promise<void> | undefined;
   return {
     server,
     address: server.address() as AddressInfo,
@@ -62,7 +78,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
           if (err) reject(err);
           else resolve();
         });
-        // Busy connections are closed by node:http after their response ends.
+        // Idle sockets now; busy ones once their response ends (hook above).
         server.closeIdleConnections();
       });
       return closing;

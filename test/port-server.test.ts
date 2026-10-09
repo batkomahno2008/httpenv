@@ -127,6 +127,68 @@ describe('graceful close', () => {
     agent.destroy();
   });
 
+  it('closes a keep-alive connection that was busy when close() started, promptly', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const env = createHandler({ getEnv: () => ['A=1'] });
+    const running = await startServer({
+      port: 0,
+      host: '127.0.0.1',
+      handler: (req, res) => {
+        void gate.then(() => {
+          env(req, res);
+        });
+      },
+    });
+    const agent = new Agent({ keepAlive: true });
+    const slow = send(running.address.port, 'GET', '/slow', agent);
+    await new Promise((r) => setTimeout(r, 50));
+
+    const closing = running.close();
+    release();
+    const started = Date.now();
+    expect((await slow).body).toBe('{"A":"1"}');
+    await closing;
+    expect(Date.now() - started).toBeLessThan(1000);
+    agent.destroy();
+  });
+
+  it('answers a request that arrives on a busy connection during close with Connection: close', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const env = createHandler({ getEnv: () => ['A=1'] });
+    const running = await startServer({
+      port: 0,
+      host: '127.0.0.1',
+      handler: (req, res) => {
+        if (req.url === '/slow') {
+          void gate.then(() => {
+            env(req, res);
+          });
+        } else env(req, res);
+      },
+    });
+    const socket = connect(running.address.port, '127.0.0.1');
+    let raw = '';
+    socket.on('data', (chunk: Buffer) => (raw += chunk.toString('latin1')));
+    const ended = new Promise((resolve) => socket.once('close', resolve));
+    await new Promise((resolve) => socket.once('connect', resolve));
+    socket.write('GET /slow HTTP/1.1\r\nHost: x\r\n\r\n');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const closing = running.close();
+    socket.write('GET /next HTTP/1.1\r\nHost: x\r\n\r\n'); // pipelined while closing
+    await new Promise((r) => setTimeout(r, 50));
+    release();
+    const started = Date.now();
+    await closing;
+    await ended;
+    expect(Date.now() - started).toBeLessThan(1000);
+    const responses = raw.split('HTTP/1.1 200 OK').slice(1);
+    expect(responses).toHaveLength(2);
+    expect(responses[1]).toMatch(/\r\nConnection: close\r\n/i);
+  });
+
   it('defaults to the env handler', async () => {
     const running = await startServer({ port: 0 });
     servers.push(running);
