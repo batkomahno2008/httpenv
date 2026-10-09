@@ -1,0 +1,13 @@
+# Prettier formats the TypeScript project only (src/, test/, root config files).
+# Everything else has its own owner and linter (yamllint, markdownlint, hadolint).
+node_modules/
+dist/
+coverage/
+package-lock.json
+*.md
+*.yml
+*.yaml
+.github/
+docs/
+manifests/
+scripts/
