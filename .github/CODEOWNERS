@@ -1,0 +1,42 @@
+# CODEOWNERS for batkomahno2008/httpenv
+#
+# Syntax: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+# The LAST matching pattern wins, so the catch-all comes first.
+#
+# The project currently has a single maintainer, so every role resolves to
+# @batkomahno2008. When the team is staffed, replace the handle on each line
+# with the GitHub user or team for the role named in the comment above it
+# (see the file-ownership table in batkomahno2008/httpenv#41, section 7).
+
+# Default owner for anything not matched below (role: project-manager).
+*                        @batkomahno2008
+
+# Application source (role: backend-ts).
+/src/                    @batkomahno2008
+/package.json            @batkomahno2008
+/package-lock.json       @batkomahno2008
+/tsconfig*.json          @batkomahno2008
+/*.go                    @batkomahno2008
+
+# Tests, e2e harness, parity tooling (role: qa-sdet).
+/test/                   @batkomahno2008
+/e2e/                    @batkomahno2008
+/scripts/                @batkomahno2008
+
+# Container image and deployment (role: devops).
+/Dockerfile*             @batkomahno2008
+/docker-compose*.yml     @batkomahno2008
+/manifests/              @batkomahno2008
+
+# CI/CD pipelines and linter configs (role: devops; security reviews scanner steps).
+/.github/workflows/      @batkomahno2008
+/.github/linters/        @batkomahno2008
+/.github/dependabot.yml  @batkomahno2008
+
+# Governance and documentation (roles: project-manager, tech-writer).
+/.github/CODEOWNERS      @batkomahno2008
+/.github/*template*      @batkomahno2008
+/.github/ISSUE_TEMPLATE/ @batkomahno2008
+/README.md               @batkomahno2008
+/CONTRIBUTING.md         @batkomahno2008
+/docs/                   @batkomahno2008
