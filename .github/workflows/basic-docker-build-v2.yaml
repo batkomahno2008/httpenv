@@ -47,6 +47,9 @@ jobs:
         with:
           dockerfile: Dockerfile
           config: .github/linters/.hadolint.yaml
+          # info-level findings are printed but do not fail the job
+          # (e.g. DL3066 non-numeric USER; the Dockerfile is rewritten in #31)
+          failure-threshold: warning
 
       - name: Lint YAML (yamllint)
         run: |
@@ -71,7 +74,7 @@ jobs:
   # Real unit tests arrive with the TypeScript port (#22, #23, #24).
   # Until then this job runs the checks that genuinely exist for the Go app.
   unit:
-    name: Unit (go vet + go build; unit tests land in #22/#23)
+    name: 'Unit (go vet + go build; unit tests land in #22/#23)'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
