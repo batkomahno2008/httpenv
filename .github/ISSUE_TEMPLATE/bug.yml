@@ -1,0 +1,95 @@
+name: Bug report
+description: Something in httpenv, its image or its CI does not behave as documented.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please search for an existing issue first.
+        If the behaviour contract (`docs/behaviour-contract.md`) covers this case, reference the relevant clause.
+  - type: dropdown
+    id: role
+    attributes:
+      label: Owning role
+      description: Which role should triage this? Pick your best guess; the project manager will correct it and add the matching `role:*` label.
+      options:
+        - Not sure
+        - backend-ts
+        - qa-sdet
+        - devops
+        - security
+        - tech-writer
+        - tech-lead
+        - project-manager
+      default: 0
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      multiple: true
+      options:
+        - HTTP server / response
+        - Container image (Dockerfile)
+        - Multi-arch (amd64 / arm64 / arm/v7)
+        - CI workflow
+        - Kubernetes manifests / compose
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the actual behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should have happened? Link the contract clause or docs if one applies.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal commands, e.g. `docker run --rm -p 8080:8080 ghcr.io/batkomahno2008/httpenv:<tag>` then `curl -i localhost:8080`.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / image tag / commit
+      placeholder: ghcr.io/batkomahno2008/httpenv@sha256:... or a commit SHA
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: e.g. linux/arm/v7 on a Raspberry Pi 3, Docker 27.x
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: Rendered as a code block automatically. Remove any secrets first.
+      render: shell
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria for the fix
+      description: Checkable conditions that prove the bug is fixed, ideally including a regression test.
+      value: |
+        - [ ] A test reproduces the bug and fails before the fix
+        - [ ] The test passes after the fix and runs in CI
+    validations:
+      required: true
