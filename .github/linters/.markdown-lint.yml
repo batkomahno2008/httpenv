@@ -7,3 +7,7 @@ MD013:
   heading_line_length: 100
   # check code blocks?
   code_blocks: false
+
+# MD060/table-column-style - a newer rule that did not exist when this config was written.
+# It rejects the common GitHub `|---|---|` separator row; the repo's tables use that style.
+MD060: false
