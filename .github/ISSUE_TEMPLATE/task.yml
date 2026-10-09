@@ -1,0 +1,88 @@
+name: Task
+description: A scoped unit of work that one agent or contributor delivers in one PR.
+title: "[Task]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A task must be deliverable as **one branch and one PR** (agents use `claude/<issue-number>-<short-slug>`).
+        It is finished when it meets the [Definition of Done](https://github.com/batkomahno2008/httpenv/blob/main/CONTRIBUTING.md#definition-of-done).
+  - type: input
+    id: parent
+    attributes:
+      label: Parent epic
+      description: Issue number of the epic this task belongs to, if any.
+      placeholder: "#17"
+  - type: dropdown
+    id: owner-role
+    attributes:
+      label: Owner role
+      description: The role that implements the task. Also add the matching `role:*` label.
+      options:
+        - backend-ts
+        - qa-sdet
+        - devops
+        - security
+        - tech-writer
+        - tech-lead
+        - project-manager
+    validations:
+      required: true
+  - type: dropdown
+    id: reviewer-role
+    attributes:
+      label: Reviewer / consultant role
+      options:
+        - None
+        - backend-ts
+        - qa-sdet
+        - devops
+        - security
+        - tech-writer
+        - tech-lead
+        - project-manager
+      default: 0
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why this task exists and the facts the implementer needs.
+    validations:
+      required: true
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Tasks
+      description: Concrete steps. Keep it to what fits in one PR.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checkable, verifiable conditions. The PR must show evidence for each one.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: input
+    id: needs
+    attributes:
+      label: Needs (dependencies)
+      description: Issues that must be merged to `main` before this task can start.
+      placeholder: "#18, #19 (or: none)"
+  - type: textarea
+    id: files
+    attributes:
+      label: Files in scope
+      description: Paths this task may edit, so parallel work does not conflict.
+      placeholder: .github/workflows/ci.yml
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: This task adds no runtime dependencies and does not change a fixed decision of the programme (batkomahno2008/httpenv#41, section 2).
+          required: true
