@@ -33,12 +33,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
-        uses: docker/docker-login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Login to ghcr.io repository
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
         with: 
@@ -88,7 +82,7 @@ jobs:
         id: docker_meta
         uses: docker/metadata-action@v5
         with:
-          images: batkomahno2008/httpenv
+          images: ghcr.io/batkomahno2008/httpenv
           flavor: |
             latest=false
           tags: |
