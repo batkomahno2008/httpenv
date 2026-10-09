@@ -5,7 +5,7 @@ name: Basic Docker Build v2
 #
 #   lint ──────────────┐
 #   unit ──────────────┤
-#   build ─┬─ e2e ─────┼── publish (push to main only)
+#   build ─┬─ e2e ─────┼── publish (push to main / v* tags only, GHCR)
 #          └─ security ┘
 #
 # `build` builds the image exactly once and shares it as an artifact;
@@ -15,6 +15,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
   # no branch filter: run the checks on every PR, including stacked PRs
   pull_request:
 
@@ -23,7 +25,7 @@ permissions: { }
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  # cancel superseded PR runs; never cancel a run on main (it may be publishing)
+  # cancel superseded PR runs; never cancel a run on main or a tag (it may be publishing)
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -33,7 +35,7 @@ env:
 
 jobs:
   lint:
-    name: Lint (Dockerfile, YAML, workflows)
+    name: Lint (Dockerfile, YAML, Markdown, workflows)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -57,6 +59,18 @@ jobs:
             --config-file .github/linters/.yaml-lint.yml \
             --format github \
             .
+
+      - name: Set up Node.js (for markdownlint)
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Lint Markdown (markdownlint)
+        run: |
+          npx --yes markdownlint-cli@0.49.1 \
+            --config .github/linters/.markdown-lint.yml \
+            --dot --ignore node_modules \
+            '**/*.md'
 
       - name: Lint workflows (actionlint)
         env:
@@ -231,10 +245,13 @@ jobs:
           sarif_file: 'trivy-results.sarif'
 
   publish:
-    name: Publish image
+    name: Publish image (GHCR)
     # every check must pass before anything is pushed
     needs: [lint, unit, build, e2e, security]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # never on pull_request, so fork PRs never need registry credentials
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -250,12 +267,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
-        uses: docker/docker-login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Login to ghcr.io repository
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
         with:
@@ -267,14 +278,17 @@ jobs:
         id: docker_meta
         uses: docker/metadata-action@v5
         with:
-          images: batkomahno2008/httpenv
+          images: ghcr.io/batkomahno2008/httpenv
           flavor: |
             latest=false
+          # tag policy:
+          #   main        -> latest + sha-<short>
+          #   vX.Y.Z tag  -> X.Y.Z + X.Y + sha-<short>
           tags: |
-            type=raw,value=04
-            type=raw,value=latest,enable=${{ endsWith(github.ref, github.event.repository.default_branch) }}
-            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short,prefix=sha-
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
