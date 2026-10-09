@@ -4,6 +4,7 @@ name: Basic Docker Build v2
 # Job graph (nothing is pushed to a registry before every check passes):
 #
 #   lint ──────────────┐
+#   workflow-security ─┤
 #   unit ──────────────┤
 #   build ─┬─ e2e ─────┼── publish (push to main / v* tags only, GHCR)
 #          └─ security ┘
@@ -42,10 +43,12 @@ jobs:
       contents: read
     steps:
       - name: Checkout git repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Lint Dockerfile (hadolint)
-        uses: hadolint/hadolint-action@v3.5.0
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: Dockerfile
           config: .github/linters/.hadolint.yaml
@@ -61,9 +64,11 @@ jobs:
             .
 
       - name: Set up Node.js (for markdownlint)
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
+          # nothing to cache (no lockfile); also avoids a cache-poisoning vector
+          package-manager-cache: false
 
       - name: Lint Markdown (markdownlint)
         # TODO: drop the ADR ignore once its two fenced blocks declare a language (MD040).
@@ -88,6 +93,43 @@ jobs:
           # `run:` scripts are checked with the shellcheck preinstalled on the runner
           "${RUNNER_TEMP}/actionlint" -color
 
+  workflow-security:
+    name: Workflow security (pinned actions, zizmor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Check every action is pinned to a full commit SHA
+        run: |
+          # allowed: owner/repo[/path]@<40-hex sha> # vX.Y.Z   (comment lets Dependabot bump it)
+          #          ./local-action   docker://image@sha256:<64-hex digest>
+          bad=$(grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:' .github/workflows \
+            | grep -vE 'uses:[[:space:]]*(\./|docker://[^[:space:]]+@sha256:[0-9a-f]{64})' \
+            | grep -vE 'uses:[[:space:]]*[^[:space:]@]+@[0-9a-f]{40}[[:space:]]+#[[:space:]]*v?[0-9]' \
+            || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Every 'uses:' must be pinned to a full 40-char commit SHA with a '# vX.Y.Z' comment"
+            echo "$bad"
+            exit 1
+          fi
+          echo "OK: all actions are pinned to a full commit SHA"
+
+      - name: Audit workflows (zizmor)
+        env:
+          # online audits (impostor commits, known-vulnerable actions) need read-only API access
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pipx run zizmor==1.30.1 \
+            --config .github/zizmor.yml \
+            --format github \
+            .github/workflows
+
   # Real unit tests arrive with the TypeScript port (#22, #23, #24).
   # Until then this job runs the checks that genuinely exist for the Go app.
   unit:
@@ -98,10 +140,12 @@ jobs:
       contents: read
     steps:
       - name: Checkout git repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: stable
           # no go.mod / go.sum in this repo, so there is nothing to cache
@@ -121,13 +165,15 @@ jobs:
       contents: read
     steps:
       - name: Checkout git repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Build image (no push)
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           push: false
@@ -138,7 +184,7 @@ jobs:
           platforms: linux/amd64
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.IMAGE_ARTIFACT }}
           path: ${{ runner.temp }}/image.tar
@@ -154,10 +200,12 @@ jobs:
       contents: read
     steps:
       - name: Checkout git repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Download image artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.IMAGE_ARTIFACT }}
           path: ${{ runner.temp }}
@@ -172,7 +220,7 @@ jobs:
           docker compose -f docker-compose.test.yml up --exit-code-from sut
           docker compose -f docker-compose.test.yml down --volumes
 
-      - uses: AbsaOSS/k3d-action@4e8b3239042be1dc0aed6c5eb80c13b18200fc79
+      - uses: AbsaOSS/k3d-action@4e8b3239042be1dc0aed6c5eb80c13b18200fc79 # v2.4.0
         with:
           cluster-name: "test-cluster-1"
           # v5.4.6 (the action's default) has no checksums.txt, which the k3d install script now requires
@@ -204,10 +252,12 @@ jobs:
       security-events: write # upload SARIF to the Security tab
     steps:
       - name: Checkout git repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Download image artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ env.IMAGE_ARTIFACT }}
           path: ${{ runner.temp }}
@@ -216,7 +266,7 @@ jobs:
         run: docker load --input "${RUNNER_TEMP}/image.tar"
 
       - name: Run Trivy for all CVEs (non-blocking)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           severity: CRITICAL,HIGH,MEDIUM,LOW
           image-ref: ${{ env.TEST_IMAGE }}
@@ -224,7 +274,7 @@ jobs:
           format: table
 
       - name: Run Trivy for all CVEs (blocking)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           severity: CRITICAL,HIGH
           image-ref: ${{ env.TEST_IMAGE }}
@@ -237,7 +287,7 @@ jobs:
           vuln-type: 'os,library'
 
       - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b # v3.38.3
         # fork PRs get a read-only token and cannot upload SARIF; the blocking scan above still gates them
         if: >-
           always() &&
@@ -250,7 +300,7 @@ jobs:
   publish:
     name: Publish image (GHCR)
     # every check must pass before anything is pushed
-    needs: [lint, unit, build, e2e, security]
+    needs: [lint, workflow-security, unit, build, e2e, security]
     # never on pull_request, so fork PRs never need registry credentials
     if: >-
       github.event_name == 'push' &&
@@ -262,16 +312,18 @@ jobs:
       packages: write # push to ghcr.io
     steps:
       - name: Checkout git repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Set Up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Login to ghcr.io repository
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -279,7 +331,7 @@ jobs:
 
       - name: Docker meta
         id: docker_meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/batkomahno2008/httpenv
           flavor: |
@@ -294,7 +346,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push multi-arch image
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           push: true
