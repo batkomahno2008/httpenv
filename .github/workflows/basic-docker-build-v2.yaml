@@ -5,12 +5,19 @@ name: Basic Docker Build v2
 #
 #   lint ──────────────┐
 #   workflow-security ─┤
+#   lint-ts ───────────┤
+#   typecheck ─────────┤
 #   unit ──────────────┤
+#   build-ts ──────────┤
+#   go-reference ──────┤
 #   build ─┬─ e2e ─────┼── publish (push to main / v* tags only, GHCR)
 #          └─ security ┘
 #
 # `build` builds the image exactly once and shares it as an artifact;
 # `e2e` and `security` load that artifact instead of pulling from a registry.
+# The Node jobs (lint-ts, typecheck, unit, build-ts) are the fast path: they
+# run in parallel on the Node version from .nvmrc (Node 22 only per the ADR,
+# so there is no version matrix).
 
 on:
   push:
@@ -138,10 +145,152 @@ jobs:
             --format github \
             .github/workflows
 
-  # Real unit tests arrive with the TypeScript port (#22, #23, #24).
-  # Until then this job runs the checks that genuinely exist for the Go app.
+  lint-ts:
+    name: Lint TypeScript (ESLint, Prettier)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          # npm cache (~/.npm, keyed on package-lock.json) on pull requests only.
+          # Push runs on main / v* tags are the publishing path, so there the
+          # expressions below are false and no cache is restored or saved.
+          # zizmor cannot evaluate expressions, hence the scoped ignore.
+          cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }} # zizmor: ignore[cache-poisoning]
+          package-manager-cache: ${{ github.event_name == 'pull_request' }}
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier check
+        run: npm run format:check
+
+  typecheck:
+    name: Typecheck (tsc --noEmit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          # npm cache (~/.npm, keyed on package-lock.json) on pull requests only.
+          # Push runs on main / v* tags are the publishing path, so there the
+          # expressions below are false and no cache is restored or saved.
+          # zizmor cannot evaluate expressions, hence the scoped ignore.
+          cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }} # zizmor: ignore[cache-poisoning]
+          package-manager-cache: ${{ github.event_name == 'pull_request' }}
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
   unit:
-    name: 'Unit (go vet + go build; unit tests land in #22/#23)'
+    name: Unit tests (Vitest + coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          # npm cache (~/.npm, keyed on package-lock.json) on pull requests only.
+          # Push runs on main / v* tags are the publishing path, so there the
+          # expressions below are false and no cache is restored or saved.
+          # zizmor cannot evaluate expressions, hence the scoped ignore.
+          cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }} # zizmor: ignore[cache-poisoning]
+          package-manager-cache: ${{ github.event_name == 'pull_request' }}
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
+
+      # coverage thresholds are enforced by #24; this only reports
+      - name: Coverage summary
+        if: ${{ !cancelled() && hashFiles('coverage/coverage-summary.json') != '' }}
+        run: |
+          {
+            echo "### Unit test coverage"
+            echo
+            echo "| Metric | Covered / Total | % |"
+            echo "|---|---|---|"
+            jq -r '.total | to_entries[]
+              | select(.key | IN("lines", "statements", "functions", "branches"))
+              | "| \(.key) | \(.value.covered) / \(.value.total) | \(.value.pct)% |"' \
+              coverage/coverage-summary.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: ${{ !cancelled() && hashFiles('coverage/coverage-summary.json') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+          if-no-files-found: error
+
+  build-ts:
+    name: Build TypeScript (tsc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout git repo
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          # npm cache (~/.npm, keyed on package-lock.json) on pull requests only.
+          # Push runs on main / v* tags are the publishing path, so there the
+          # expressions below are false and no cache is restored or saved.
+          # zizmor cannot evaluate expressions, hence the scoped ignore.
+          cache: ${{ github.event_name == 'pull_request' && 'npm' || '' }} # zizmor: ignore[cache-poisoning]
+          package-manager-cache: ${{ github.event_name == 'pull_request' }}
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+  # Go parity reference (httpenv.go) for the e2e/parity suite; removed at cutover (#34).
+  go-reference:
+    name: Go reference (go vet + go build)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -342,7 +491,7 @@ jobs:
   publish:
     name: Publish image (GHCR)
     # every check must pass before anything is pushed
-    needs: [lint, workflow-security, unit, build, e2e, security]
+    needs: [lint, workflow-security, lint-ts, typecheck, unit, build-ts, go-reference, build, e2e, security]
     # never on pull_request, so fork PRs never need registry credentials
     if: >-
       github.event_name == 'push' &&

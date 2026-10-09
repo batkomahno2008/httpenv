@@ -6,6 +6,12 @@
 # You can disable line with:              #
 # # yamllint disable-line                 #
 ###########################################
+# generated / third-party trees are not ours to lint
+ignore: |
+  node_modules/
+  dist/
+  coverage/
+
 rules:
   braces:
     level: warning
