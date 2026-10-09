@@ -12,14 +12,19 @@ const live = new Set();
 /** Run `docker <args>`; resolves {stdout, stderr}, rejects with stderr in the message. */
 export function docker(args, { timeoutMs = 120_000 } = {}) {
   return new Promise((resolve, reject) => {
-    execFile('docker', args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        const why = err.killed ? `timed out after ${timeoutMs} ms` : `exit ${err.code}`;
-        reject(new Error(`docker ${args.join(' ')} failed (${why}): ${String(stderr).trim()}`));
-        return;
-      }
-      resolve({ stdout: String(stdout), stderr: String(stderr) });
-    });
+    execFile(
+      'docker',
+      args,
+      { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          const why = err.killed ? `timed out after ${timeoutMs} ms` : `exit ${err.code}`;
+          reject(new Error(`docker ${args.join(' ')} failed (${why}): ${String(stderr).trim()}`));
+          return;
+        }
+        resolve({ stdout: String(stdout), stderr: String(stderr) });
+      },
+    );
   });
 }
 
@@ -28,7 +33,9 @@ export async function ensureImage(image, platform) {
   try {
     await docker(['image', 'inspect', image]);
   } catch {
-    await docker(['pull', ...(platform ? ['--platform', platform] : []), image], { timeoutMs: 600_000 });
+    await docker(['pull', ...(platform ? ['--platform', platform] : []), image], {
+      timeoutMs: 600_000,
+    });
   }
 }
 
@@ -49,7 +56,8 @@ export async function startContainer(image, { env = {}, hostname, platform } = {
   const { stdout: mapping } = await docker(['port', name, '8080/tcp']);
   const first = mapping.trim().split('\n')[0];
   const port = Number(first.slice(first.lastIndexOf(':') + 1));
-  if (!Number.isInteger(port) || port <= 0) throw new Error(`cannot parse published port from "${mapping}"`);
+  if (!Number.isInteger(port) || port <= 0)
+    throw new Error(`cannot parse published port from "${mapping}"`);
   return { name, id, port };
 }
 
@@ -83,7 +91,11 @@ function cleanupSync() {
   live.clear();
 }
 process.once('exit', cleanupSync);
-for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+for (const [sig, code] of [
+  ['SIGINT', 130],
+  ['SIGTERM', 143],
+  ['SIGHUP', 129],
+]) {
   process.once(sig, () => {
     cleanupSync();
     process.exit(code);
@@ -98,7 +110,9 @@ export function request(port, { method = 'GET', path = '/', timeoutMs = 5_000 } 
       (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+        res.on('end', () =>
+          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }),
+        );
         res.on('error', reject);
       },
     );
@@ -119,7 +133,10 @@ export async function waitReady(container, timeoutMs) {
   while (Date.now() - start < timeoutMs) {
     const state = (await inspect(container.name)).State;
     if (!state.Running) {
-      const logs = await docker(['logs', container.name]).catch((e) => ({ stdout: '', stderr: e.message }));
+      const logs = await docker(['logs', container.name]).catch((e) => ({
+        stdout: '',
+        stderr: e.message,
+      }));
       throw new Error(
         `container exited before becoming ready (exit ${state.ExitCode}).\n` +
           `stdout:\n${logs.stdout}\nstderr:\n${logs.stderr}`,
@@ -127,7 +144,9 @@ export async function waitReady(container, timeoutMs) {
     }
     try {
       const remaining = timeoutMs - (Date.now() - start);
-      const res = await request(container.port, { timeoutMs: Math.max(250, Math.min(2_000, remaining)) });
+      const res = await request(container.port, {
+        timeoutMs: Math.max(250, Math.min(2_000, remaining)),
+      });
       if (res.status === 200) return Date.now() - start;
       last = `HTTP ${res.status}`;
     } catch (err) {
