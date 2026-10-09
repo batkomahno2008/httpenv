@@ -1,0 +1,13 @@
+{
+  // Emit config: compiles src/ only to dist/ as ES modules (no tests, no configs).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": true,
+    "removeComments": false
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -1,0 +1,9 @@
+# Node.js / TypeScript
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+
+# Go build output (until cutover, #34)
+/httpenv
