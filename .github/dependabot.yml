@@ -1,7 +1,86 @@
 version: 2
+
+# Dependabot version updates (issue #33).
+# - Weekly schedule; minor + patch updates are grouped into one PR per
+#   ecosystem, major updates arrive as individual PRs so CI gates each one.
+# - cooldown delays brand-new releases (supply-chain hygiene, recommended by zizmor).
+# - The labels `dependencies` + ecosystem label must exist in the repository;
+#   Dependabot does not create custom labels and only warns when they are missing.
 updates:
-  # Maintain dependencies for GitHub Actions
+  # GitHub Actions: workflows pin every action to a 40-char SHA with a
+  # `# vX.Y.Z` comment; Dependabot bumps both the SHA and the comment.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions-minor-patch:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # npm: devDependencies only (package.json / package-lock.json at the root).
+  # Note: typescript-eslint declares a peer range on typescript (8.71.1
+  # requires typescript <6.1.0). A TypeScript bump outside that range is
+  # deliberately not ignored here; CI (npm ci / lint / typecheck) rejects it
+  # until typescript-eslint catches up.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "npm"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+    ignore:
+      # Runtime is Node 22 (ADR docs/adr/0001-node-base-image.md; engines
+      # ">=22.12.0 <23"), so Node type definitions must stay on 22.x.
+      - dependency-name: "@types/node"
+        versions:
+          - ">=23"
+    groups:
+      npm-minor-patch:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Docker: base images in Dockerfile* at the root (Dockerfile, Dockerfile.go).
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    ignore:
+      # ADR docs/adr/0001-node-base-image.md: Node must stay on 22 because
+      # Node 24+ ships no linux/arm/v7 image. Only 22.x tag/digest bumps.
+      - dependency-name: "node"
+        versions:
+          - ">=23"
+    groups:
+      docker-minor-patch:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
