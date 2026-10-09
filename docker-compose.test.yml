@@ -7,10 +7,8 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-    volumes:
-      - ./healthchecks:/healthchecks
     healthcheck:
-      test: /healthchecks/postgres-healthcheck
+      test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: "10s"
   sut:
     image: "${TESTING_IMAGE}"
@@ -20,4 +18,4 @@ services:
       postgres:
         condition: service_healthy
     # run all your tests here against the allhands22 service
-    command: curl --fail http://allhands22:80 || exit 1
+    command: wget -qO- http://allhands22:8080
